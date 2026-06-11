@@ -23,7 +23,7 @@ import {
   resetMetricCards,
   setMetricValue,
 } from './viz.js';
-import { measureLatency, measureDownload, measureUpload } from './measurements.js';
+import { runMeasurements } from './measurements.js';
 import { showAnalysis } from './analysis.js';
 import { saveHistory, renderHistory, clearHistory } from './history.js';
 import { shareResults, copyResults } from './share.js';
@@ -115,18 +115,25 @@ async function runTest() {
   /** @type {Array<[string, unknown]>} */
   const errors = [];
 
+  // Initial phase: latency. Phase transitions (download → upload) are driven
+  // by the SDK via the onPhase callback as the engine progresses.
   setPhase('ping', 'Measuring Latency…');
   setMetricActive('mc-ping');
-  await runStage('latency', measureLatency, errors);
 
-  setPhase('download', 'Download…');
-  setMetricActive('mc-down');
-  await runStage('download', measureDownload, errors);
-
-  setPhase('upload', 'Upload…');
-  setMetricActive('mc-up');
-  gauge.setValue(0);
-  await runStage('upload', measureUpload, errors);
+  await runMeasurements({
+    onPhase(phase) {
+      if (phase === 'download') {
+        setPhase('download', 'Download…');
+        setMetricActive('mc-down');
+        gauge.setValue(0);
+      }
+      if (phase === 'upload') {
+        setPhase('upload', 'Upload…');
+        setMetricActive('mc-up');
+        gauge.setValue(0);
+      }
+    },
+  }).catch((err) => errors.push(['measurements', err]));
 
   if (state.cancelRequested) {
     setPhase('idle', 'Cancelled');

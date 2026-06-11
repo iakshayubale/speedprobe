@@ -1,62 +1,33 @@
 /**
- * The measurement engine: latency/jitter, download (with timing breakdown and
- * bufferbloat) and upload.
+ * Measurement engine — powered by the official @cloudflare/speedtest SDK.
  *
- * Each stage mutates `state.results` and feeds the live gauge/graph. Stages
- * honour `state.cancelRequested` so a run can be aborted promptly.
+ * Using the official Cloudflare library ensures methodology and Terms of Service
+ * alignment. The SDK drives the same speed.cloudflare.com endpoints with
+ * Cloudflare's own ramp-up algorithm and percentile calculations.
+ *
+ * DNS / TCP / TLS / TTFB timing is captured separately via the
+ * PerformanceResourceTiming API, which the SDK does not expose directly.
  *
  * @module measurements
+ * @see https://github.com/cloudflare/speedtest
  */
 
-import { ENDPOINTS, TEST } from './config.js';
+// Official Cloudflare speedtest SDK loaded as an ES module via esm.sh CDN.
+// No build step required — esm.sh converts the npm package to ESM on the fly.
+import SpeedTest from 'https://esm.sh/@cloudflare/speedtest';
+
+import { ENDPOINTS } from './config.js';
 import { state } from './state.js';
 import { gauge, graph, setMetricValue } from './viz.js';
-import { byId } from './dom.js';
-import { sleep, median, standardDeviation, mean, clamp, toMbps, formatSpeed, formatMs } from './utils.js';
+import { clamp, formatSpeed, formatMs } from './utils.js';
 
-/** Cache-busting query string. */
+/** Cache-busting nonce for the timing-capture probe. */
 const nonce = () => `_=${Date.now()}`;
 
 /**
- * Measure unloaded latency, jitter and packet loss with a burst of tiny
- * requests, writing `ping`, `jitter` and `packetLoss` into the results.
- * @returns {Promise<void>}
- */
-export async function measureLatency() {
-  const latencies = [];
-  let failed = 0;
-
-  for (let i = 0; i < TEST.latencyProbes; i++) {
-    if (state.cancelRequested) return;
-    try {
-      const start = performance.now();
-      await fetch(`${ENDPOINTS.download}?bytes=0&${nonce()}`, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(TEST.latencyTimeoutMs),
-      });
-      const latency = performance.now() - start;
-      latencies.push(latency);
-      state.latencySamples.push({ t: performance.now(), v: latency });
-      setMetricValue('v-ping', formatMs(median(latencies)));
-      await sleep(TEST.latencyGapMs);
-    } catch {
-      failed++;
-    }
-  }
-
-  state.results.packetLoss = (failed / TEST.latencyProbes) * 100;
-  if (latencies.length > 0) {
-    state.results.ping = median(latencies);
-    state.results.jitter = standardDeviation(latencies);
-    setMetricValue('v-ping', formatMs(state.results.ping));
-    setMetricValue('v-jitter', formatMs(state.results.jitter));
-    byId('mc-jitter')?.classList.add('done');
-  }
-}
-
-/**
- * Capture DNS/TCP/TLS/TTFB timing for the Cloudflare edge using the Resource
- * Timing API. Best-effort: silently skips if timing is unavailable.
+ * Capture DNS / TCP / TLS / TTFB timing from the PerformanceResourceTiming API.
+ * Best-effort: silently skips when cross-origin timing data is blocked (common
+ * in some browsers) or when an existing cached connection collapses the timings.
  * @private
  */
 async function captureConnectionTiming() {
@@ -67,163 +38,142 @@ async function captureConnectionTiming() {
     });
     const entries = performance
       .getEntriesByType('resource')
-      .filter((entry) => entry.name.includes('speed.cloudflare.com'));
-    if (entries.length === 0) return;
+      .filter((e) => e.name.includes('speed.cloudflare.com'));
+    if (!entries.length) return;
 
     const entry = entries[entries.length - 1];
     if (entry.domainLookupEnd > 0) {
       state.results.dnsTime = Math.max(0, entry.domainLookupEnd - entry.domainLookupStart);
       state.results.tcpTime = Math.max(0, entry.connectEnd - entry.connectStart);
       state.results.tlsTime =
-        entry.secureConnectionStart > 0 ? Math.max(0, entry.connectEnd - entry.secureConnectionStart) : 0;
+        entry.secureConnectionStart > 0
+          ? Math.max(0, entry.connectEnd - entry.secureConnectionStart)
+          : 0;
       state.results.ttfb = Math.max(0, entry.responseStart - entry.requestStart);
     }
   } catch {
-    // Timing data unavailable (cross-origin restriction or cache) — ignore.
+    // Timing unavailable — ignore.
   }
 }
 
 /**
- * Measure download throughput by streaming a large payload, while concurrently
- * probing latency to detect bufferbloat. Writes `download`, `peakDownload`,
- * `consistency` and `bufferbloat`.
+ * Run the full measurement suite using the official @cloudflare/speedtest SDK.
+ *
+ * The SDK drives Cloudflare's standard ramp-up methodology (multiple file sizes,
+ * parallel probing, percentile-based aggregation) — the same algorithm that
+ * powers https://speed.cloudflare.com.
+ *
+ * Drives the live gauge, graph and metric displays as results arrive via
+ * `onResultsChange`. Resolves when all measurements are complete or when the
+ * user cancels.
+ *
+ * @param {{ onPhase?: (phase: 'latency'|'download'|'upload') => void }} [opts]
  * @returns {Promise<void>}
  */
-export async function measureDownload() {
+export async function runMeasurements({ onPhase } = {}) {
   await captureConnectionTiming();
 
-  const url = `${ENDPOINTS.download}?bytes=${TEST.downloadBytes}&${nonce()}`;
-  const start = performance.now();
-  let received = 0;
-  const speeds = [];
-  const loadedLatencies = [];
+  return new Promise((resolve, reject) => {
+    const engine = new SpeedTest({ autoStart: false });
 
-  // Probe latency under load to quantify bufferbloat.
-  const bufferbloatProbe = setInterval(async () => {
-    if (state.cancelRequested) {
-      clearInterval(bufferbloatProbe);
-      return;
-    }
-    try {
-      const probeStart = performance.now();
-      await fetch(`${ENDPOINTS.download}?bytes=0&${nonce()}`, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(2000),
-      });
-      const latency = performance.now() - probeStart;
-      loadedLatencies.push(latency);
-      graph.addLatency(performance.now(), latency);
-    } catch {
-      // Ignore individual probe failures.
-    }
-  }, TEST.bufferbloatProbeMs);
+    /** Track which phase is currently active to avoid redundant callbacks. */
+    let activePhase = null;
 
-  try {
-    const response = await fetch(url, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(TEST.downloadTimeoutMs),
-    });
-    const reader = response.body.getReader();
-
-    for (;;) {
+    engine.onResultsChange = ({ type }) => {
       if (state.cancelRequested) {
-        reader.cancel();
-        break;
+        engine.pause();
+        resolve();
+        return;
       }
-      const { done, value } = await reader.read();
-      if (done) break;
 
-      received += value.length;
-      const elapsed = (performance.now() - start) / 1000;
-      if (elapsed > TEST.minSampleSeconds) {
-        const speed = toMbps(received, elapsed);
-        gauge.setValue(speed);
-        speeds.push(speed);
-        graph.addSpeed(performance.now(), speed);
-        setMetricValue('v-down', formatSpeed(speed));
+      const r = engine.results;
+
+      /* ── Latency / jitter ──────────────────────────────────────────── */
+      if (type === 'latency') {
+        if (activePhase !== 'latency') {
+          activePhase = 'latency';
+          onPhase?.('latency');
+        }
+        const ping   = r.getUnloadedLatency();
+        const jitter = r.getUnloadedJitter();
+        if (ping   != null) { state.results.ping   = ping;   setMetricValue('v-ping',   formatMs(ping));   }
+        if (jitter != null) { state.results.jitter = jitter; setMetricValue('v-jitter', formatMs(jitter)); }
       }
-    }
-  } finally {
-    clearInterval(bufferbloatProbe);
-  }
 
-  if (speeds.length > 4) {
-    state.results.peakDownload = Math.max(...speeds);
-    const sorted = [...speeds].sort((a, b) => a - b);
-    const lo = Math.floor(sorted.length * 0.75);
-    const hi = Math.floor(sorted.length * 0.95);
-    const steady = sorted.slice(lo, hi + 1);
-    state.results.download = mean(steady);
-    state.results.consistency = clamp(100 - (standardDeviation(speeds) / mean(speeds)) * 100, 0, 100);
-    setMetricValue('v-down', formatSpeed(state.results.download));
-  }
+      /* ── Download ──────────────────────────────────────────────────── */
+      if (type === 'download') {
+        if (activePhase !== 'download') {
+          activePhase = 'download';
+          onPhase?.('download');
+        }
+        const pts = r.getDownloadBandwidthPoints();
+        if (pts?.length) {
+          const mbps = pts[pts.length - 1].bps / 1e6;
+          gauge.setValue(mbps);
+          graph.addSpeed(performance.now(), mbps);
+          setMetricValue('v-down', formatSpeed(mbps));
+          state.results.download = mbps;
+        }
+        // Loaded latency (under download load) → bufferbloat delta
+        const loaded = r.getDownLoadedLatency();
+        if (loaded != null) {
+          if (state.results.ping != null) {
+            state.results.bufferbloat = loaded - state.results.ping;
+          }
+          graph.addLatency(performance.now(), loaded);
+        }
+      }
 
-  if (loadedLatencies.length > 1 && state.results.ping != null) {
-    state.results.bufferbloat = median(loadedLatencies) - state.results.ping;
-  }
+      /* ── Upload ────────────────────────────────────────────────────── */
+      if (type === 'upload') {
+        if (activePhase !== 'upload') {
+          activePhase = 'upload';
+          onPhase?.('upload');
+        }
+        const pts = r.getUploadBandwidthPoints();
+        if (pts?.length) {
+          const mbps = pts[pts.length - 1].bps / 1e6;
+          gauge.setValue(mbps);
+          graph.addSpeed(performance.now(), mbps);
+          setMetricValue('v-up', formatSpeed(mbps));
+          state.results.upload = mbps;
+        }
+      }
+    };
+
+    engine.onFinish = (results) => {
+      // Settle final authoritative values from the SDK's percentile calculations
+      const ping   = results.getUnloadedLatency();
+      const jitter = results.getUnloadedJitter();
+      const dlBps  = results.getDownloadBandwidth();
+      const ulBps  = results.getUploadBandwidth();
+
+      if (ping   != null) { state.results.ping     = ping;         setMetricValue('v-ping',   formatMs(ping));          }
+      if (jitter != null) { state.results.jitter   = jitter;       setMetricValue('v-jitter', formatMs(jitter));        }
+      if (dlBps  != null) { state.results.download = dlBps / 1e6;  setMetricValue('v-down',   formatSpeed(dlBps / 1e6));}
+      if (ulBps  != null) { state.results.upload   = ulBps / 1e6;  setMetricValue('v-up',     formatSpeed(ulBps / 1e6));}
+
+      // Derive speed consistency and peak download from the bandwidth time series
+      const dlPts = results.getDownloadBandwidthPoints() || [];
+      if (dlPts.length > 2) {
+        const vals = dlPts.map((p) => p.bps);
+        const avg  = vals.reduce((s, v) => s + v, 0) / vals.length;
+        const std  = Math.sqrt(vals.reduce((s, v) => s + (v - avg) ** 2, 0) / vals.length);
+        state.results.consistency  = clamp(100 - (std / avg) * 100, 0, 100);
+        state.results.peakDownload = Math.max(...vals) / 1e6;
+      }
+
+      // Packet loss from SDK (only populated when a TURN server is configured)
+      const pl = results.getPacketLoss?.();
+      if (pl != null) state.results.packetLoss = pl * 100;
+
+      resolve();
+    };
+
+    engine.onError = (err) => reject(new Error(String(err)));
+
+    engine.play();
+  });
 }
 
-/**
- * Measure upload throughput.
- *
- * We deliberately use `fetch` with `mode: 'no-cors'` rather than `XMLHttpRequest`.
- * Attaching an `xhr.upload` progress listener forces a CORS preflight (OPTIONS),
- * which the Cloudflare `__up` endpoint does not answer — so XHR uploads always
- * failed with a CORS error. A no-cors fetch sends a "simple" request (no
- * preflight) and resolves with an opaque response. Since per-byte progress is
- * unavailable, we upload several sequential chunks and time each one to drive
- * the live gauge and graph.
- * @returns {Promise<void>}
- */
-export async function measureUpload() {
-  const payload = new Uint8Array(TEST.uploadChunkBytes);
-  crypto.getRandomValues(payload.subarray(0, Math.min(65536, TEST.uploadChunkBytes)));
 
-  const speeds = [];
-  let totalBytes = 0;
-  let failures = 0;
-  const start = performance.now();
-
-  for (let i = 0; i < TEST.uploadChunks; i++) {
-    if (state.cancelRequested) return;
-
-    const chunkStart = performance.now();
-    try {
-      await fetch(`${ENDPOINTS.upload}?${nonce()}`, {
-        method: 'POST',
-        body: new Blob([payload]),
-        mode: 'no-cors',
-        cache: 'no-store',
-        signal: AbortSignal.timeout(TEST.uploadTimeoutMs),
-      });
-    } catch {
-      failures++;
-      if (failures >= TEST.uploadChunks) throw new Error('Upload failed (all chunks)');
-      continue;
-    }
-
-    const elapsed = (performance.now() - chunkStart) / 1000;
-    totalBytes += TEST.uploadChunkBytes;
-    if (elapsed > 0.03) {
-      const speed = toMbps(TEST.uploadChunkBytes, elapsed);
-      speeds.push(speed);
-      gauge.setValue(speed);
-      graph.addSpeed(performance.now(), speed);
-      setMetricValue('v-up', formatSpeed(speed));
-    }
-  }
-
-  if (totalBytes > 0) {
-    // Overall throughput accounts for setup overhead; report the better of it
-    // and the trimmed steady-state samples.
-    const overall = toMbps(totalBytes, (performance.now() - start) / 1000);
-    let value = overall;
-    if (speeds.length > 2) {
-      const sorted = [...speeds].sort((a, b) => a - b);
-      const trimmed = mean(sorted.slice(Math.floor(sorted.length * 0.4)));
-      value = Math.max(overall, trimmed);
-    }
-    state.results.upload = value;
-    setMetricValue('v-up', formatSpeed(value));
-  }
-}
