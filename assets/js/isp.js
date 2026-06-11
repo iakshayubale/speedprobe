@@ -44,52 +44,68 @@ const cleanOrg = (s) => (s || '').replace(/^AS\d+\s*/i, '').trim();
 /**
  * Detect ISP, IP and location using Cloudflare's own infrastructure.
  *
- * Primary: reads cf-meta-asn, cf-meta-city, cf-meta-country, cf-meta-ip from
- * the speed.cloudflare.com/__down?bytes=0 response headers. These are
- * explicitly listed in access-control-expose-headers so JavaScript can read them.
+ * Uses two Cloudflare-native sources in parallel:
+ *  1. cdn-cgi/trace     — colo (datacenter), loc (country code), ip
+ *  2. speed.cloudflare.com/__down?bytes=0 — cf-meta-asn, cf-meta-city,
+ *     cf-meta-country, cf-meta-ip (populated only on fresh connections)
  *
- * Fallback: cdn-cgi/trace for IP + country when headers are absent (e.g. cached
- * connections that reuse an existing socket).
+ * The trace result always provides a meaningful label. The speed-test headers
+ * provide richer org/city data when Cloudflare populates them.
  *
  * @returns {Promise<void>}
  */
 export async function detectISP() {
   try {
-    // Primary: probe the Cloudflare speed-test edge — headers carry geo/ASN data.
-    const res = await fetch(`${ENDPOINTS.download}?bytes=0&_=${Date.now()}`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(ISP_TIMEOUT_MS),
-    });
+    // Run both sources in parallel — whichever finishes first updates the UI.
+    const [traceRes, metaRes] = await Promise.allSettled([
+      fetch(CF_TRACE_URL, { signal: AbortSignal.timeout(ISP_TIMEOUT_MS) }),
+      fetch(`${ENDPOINTS.download}?bytes=0&_=${Date.now()}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(ISP_TIMEOUT_MS),
+      }),
+    ]);
 
-    const asn     = res.headers.get('cf-meta-asn');      // e.g. "AS7922 Comcast"
-    const city    = res.headers.get('cf-meta-city');
-    const country = res.headers.get('cf-meta-country');
-    const metaIp  = res.headers.get('cf-meta-ip');
-
-    if (asn || city || country || metaIp) {
-      const org = cleanOrg(asn);
-      setText('isp-name', org || 'Unknown ISP');
-
-      if (metaIp) {
-        setText('isp-ip', formatIP(metaIp));
-        byId('isp-sep1').style.display = '';
-      }
-      if (city || country) {
-        setText('isp-loc', [city, country].filter(Boolean).join(', '));
-        byId('isp-sep2').style.display = '';
-      }
-      return;
+    // --- Parse trace (always available) ---
+    let traceIp = '', traceColo = '', traceLoc = '';
+    if (traceRes.status === 'fulfilled' && traceRes.value.ok) {
+      const fields = parseTrace(await traceRes.value.text());
+      traceIp   = fields.ip   || '';
+      traceColo = fields.colo || '';
+      traceLoc  = fields.loc  || '';
     }
 
-    // Fallback: cdn-cgi/trace gives at least IP + country + datacenter.
-    const trace  = await fetch(CF_TRACE_URL, { signal: AbortSignal.timeout(ISP_TIMEOUT_MS) });
-    const fields = parseTrace(await trace.text());
-    const { ip, loc, colo } = fields;
+    // --- Parse speed-test response headers (enrichment, may be empty) ---
+    let metaAsn = '', metaCity = '', metaCountry = '', metaIp = '';
+    if (metaRes.status === 'fulfilled') {
+      const h = metaRes.value.headers;
+      metaAsn     = h.get('cf-meta-asn')     || '';
+      metaCity    = h.get('cf-meta-city')     || '';
+      metaCountry = h.get('cf-meta-country')  || '';
+      metaIp      = h.get('cf-meta-ip')       || '';
+    }
 
-    setText('isp-name', [colo, loc].filter(Boolean).join(' · ') || 'Cloudflare');
+    // --- Build display values ---
+    // ISP/org name: prefer ASN header, fall back to datacenter+country from trace
+    const org = cleanOrg(metaAsn);
+    const label = org || [traceColo, traceLoc].filter(Boolean).join(' · ') || 'Cloudflare';
+
+    // Location: prefer city+country from headers, fall back to colo+loc from trace
+    const location = metaCity && metaCountry
+      ? `${metaCity}, ${metaCountry}`
+      : [traceColo, traceLoc].filter(Boolean).join(' · ');
+
+    // IP: prefer header (may differ from trace for proxied/dual-stack), fall back
+    const ip = metaIp || traceIp;
+
+    setText('isp-name', label);
+
     if (ip) {
       setText('isp-ip', formatIP(ip));
       byId('isp-sep1').style.display = '';
+    }
+    if (location && location !== label) {
+      setText('isp-loc', location);
+      byId('isp-sep2').style.display = '';
     }
   } catch {
     setText('isp-name', 'Network unavailable');
