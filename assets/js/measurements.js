@@ -12,9 +12,11 @@
  * @see https://github.com/cloudflare/speedtest
  */
 
-// Official Cloudflare speedtest SDK loaded as an ES module via esm.sh CDN.
-// No build step required — esm.sh converts the npm package to ESM on the fly.
-import SpeedTest from 'https://esm.sh/@cloudflare/speedtest';
+// Official Cloudflare speedtest SDK (MIT) — self-hosted from assets/js/vendor/.
+// Source: https://github.com/cloudflare/speedtest  v1.10.1
+// Self-hosting avoids any third-party CDN dependency and keeps all requests
+// within this domain (consistent with the "No tracking" guarantee).
+import SpeedTest from './vendor/speedtest.js';
 
 import { ENDPOINTS } from './config.js';
 import { state } from './state.js';
