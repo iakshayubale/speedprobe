@@ -74,27 +74,12 @@ export const STORAGE_KEY = 'speedprobe_history';
 export const HISTORY_LIMIT = 50;
 
 /**
- * Ordered list of public IP/ISP lookup providers. The first provider that
- * returns a usable response wins; the rest are skipped. Each provider supplies
- * a normaliser so the rest of the app sees a single shape.
+ * Cloudflare's own network-info endpoint.
+ * Returns plain-text key=value pairs including the client IP and country code.
+ * No third-party service; no data leaves Cloudflare's infrastructure.
+ * @see https://cloudflare.com/cdn-cgi/trace
  */
-export const ISP_PROVIDERS = Object.freeze([
-  {
-    url: 'https://ipinfo.io/json',
-    normalize: (d) => ({ ip: d.ip, org: d.org, city: d.city, country: d.country }),
-    isValid: (d) => !d.error && Boolean(d.ip),
-  },
-  {
-    url: 'https://ipapi.co/json/',
-    normalize: (d) => ({ ip: d.ip, org: d.org, city: d.city, country: d.country_code }),
-    isValid: (d) => !d.error && Boolean(d.ip),
-  },
-  {
-    url: 'https://freeipapi.com/api/json',
-    normalize: (d) => ({ ip: d.ipAddress, org: d.isp, city: d.cityName, country: d.countryCode }),
-    isValid: (d) => Boolean(d.ipAddress),
-  },
-]);
+export const CF_TRACE_URL = 'https://cloudflare.com/cdn-cgi/trace';
 
-/** Timeout for ISP lookups. */
+/** Timeout for the network-info lookup (ms). */
 export const ISP_TIMEOUT_MS = 5000;
