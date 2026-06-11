@@ -1,0 +1,11 @@
+{
+  "name": "speedprobe",
+  "version": "1.0.0",
+  "description": "Crystal-clear internet diagnostics.",
+  "scripts": {
+    "start": "python3 -m http.server 8848"
+  },
+  "keywords": ["speed-test", "network", "diagnostics", "vanilla-js", "es-modules"],
+  "license": "MIT",
+  "homepage": "https://iakshayubale.github.io/speedprobe"
+}
