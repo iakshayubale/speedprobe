@@ -1,3 +1,14 @@
+/*!
+ * @cloudflare/speedtest v1.10.1
+ * MIT License — Copyright (c) 2023 Cloudflare
+ * https://github.com/cloudflare/speedtest
+ *
+ * Note: on test completion this library sends anonymised measurement results to
+ * Cloudflare's AIM (Aggregated Internet Measurements) database via
+ * aim.cloudflare.com/__log. This is documented in the library README and is the
+ * intended behaviour. It is NOT personal data — no IP or user identifiers are
+ * included in the payload.
+ */
 //#region src/config/defaultConfig.ts
 const REL_API_URL = "https://speed.cloudflare.com";
 const defaultConfig = {
