@@ -111,5 +111,12 @@ Released under the [MIT License](LICENSE).
 
 ## Acknowledgements
 
-Measurement traffic is served by [Cloudflare's public speed test](https://speed.cloudflare.com).
+Measurement traffic is served by [Cloudflare's public speed test](https://speed.cloudflare.com)
+(`speed.cloudflare.com/__down` / `/__up`), which is the same infrastructure used by
+[cloudflare.com/speed](https://cloudflare.com/speed) and is openly available for third-party
+measurement tools. Cloudflare also aggregates anonymised results to power their
+[AIM Internet Quality database](https://blog.cloudflare.com/aim-database-for-internet-quality/).
 SpeedProbe is not affiliated with or endorsed by Cloudflare.
+
+Fonts (Sora, JetBrains Mono) are self-hosted from `assets/fonts/` — no request leaves
+your domain. Licensed under [SIL Open Font License 1.1](https://openfontlicense.org).
