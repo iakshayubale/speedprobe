@@ -58,47 +58,56 @@ The application is split into small, single-responsibility ES Modules under
 `assets/js/`. `app.js` is the entry point and the only file referenced by
 `index.html`.
 
+For the full reference — module dependency graph, test execution sequence,
+ISP detection flow and data-privacy table — see
+[architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md).
+
+### How it fits together
+
+```mermaid
+flowchart TD
+    Browser["Browser\n(index.html)"]
+
+    subgraph CF ["☁️  Cloudflare Infrastructure"]
+        DOWN["speed.cloudflare.com/__down\nLatency · Download · ISP headers"]
+        UP["speed.cloudflare.com/__up\nUpload"]
+        TRACE["cloudflare.com/cdn-cgi/trace\nIP · Datacenter · Country"]
+        AIM["aim.cloudflare.com/__log\nAnonymised result logging\n(SDK-managed, no personal data)"]
+    end
+
+    subgraph Store ["💾  Browser Storage"]
+        LS["localStorage\nTest history (last 10 results)"]
+    end
+
+    Browser -->|"fetch (latency + download)"| DOWN
+    Browser -->|"fetch (upload)"| UP
+    Browser -->|"fetch (ISP detection)"| TRACE
+    Browser -->|"fetch (ISP header enrichment)"| DOWN
+    Browser -.->|"SDK sends on finish"| AIM
+    Browser <-->|"read / write"| LS
+```
+
+### Module responsibilities
+
 | Module            | Responsibility                                                        |
 | ----------------- | --------------------------------------------------------------------- |
 | `app.js`          | Entry point — bootstraps the app, orchestrates a test, wires events.  |
 | `config.js`       | Frozen configuration: endpoints, test tuning, colours, storage keys.  |
 | `state.js`        | Shared, resettable run state for the single active test.              |
-| `measurements.js` | Latency, download and upload measurement routines.                    |
+| `measurements.js` | Wraps the Cloudflare SDK — latency, download and upload phases.       |
 | `analysis.js`     | Grading, bufferbloat rating, insights and use-case verdicts.          |
 | `gauge.js`        | The animated speed gauge (`<canvas>`).                                |
 | `graph.js`        | The live throughput / latency graph (`<canvas>`).                     |
 | `viz.js`          | Owns the gauge/graph singletons and small UI-state helpers.           |
 | `background.js`   | Particle field, custom cursor, scroll progress and reveal effects.    |
-| `isp.js`          | Best-effort ISP / IP / location detection.                            |
+| `isp.js`          | ISP / IP / location detection via Cloudflare-only endpoints.          |
 | `history.js`      | Persisting and rendering past results from `localStorage`.            |
 | `share.js`        | Web Share API with a clipboard fallback.                              |
 | `dom.js`          | Tiny DOM helpers (`byId`, `setText`, …).                              |
 | `utils.js`        | Pure helpers: stats, formatting and a small polyfill.                 |
+| `vendor/speedtest.js` | `@cloudflare/speedtest` v1.10.1 — MIT © 2023 Cloudflare.         |
 
-Styles live in `assets/css/styles.css`.
-
-```
-speedtest/
-├── index.html
-└── assets/
-    ├── css/
-    │   └── styles.css
-    └── js/
-        ├── app.js          ← entry point
-        ├── config.js
-        ├── state.js
-        ├── measurements.js
-        ├── analysis.js
-        ├── gauge.js
-        ├── graph.js
-        ├── viz.js
-        ├── background.js
-        ├── isp.js
-        ├── history.js
-        ├── share.js
-        ├── dom.js
-        └── utils.js
-```
+Styles live in `assets/css/styles.css`. Fonts are self-hosted in `assets/fonts/` (no CDN calls).
 
 ## Contributing
 
