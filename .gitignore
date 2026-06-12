@@ -12,3 +12,6 @@ Thumbs.db
 
 # Node (if anyone adds a build step later)
 node_modules/
+
+# Demo capture — frames are intermediary, only the final GIF is committed
+architecture/frames/

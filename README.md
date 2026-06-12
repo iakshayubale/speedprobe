@@ -2,6 +2,10 @@
 
 > Crystal-clear, real-time internet speed & diagnostics — right in your browser.
 
+**[→ Live demo](https://iakshayubale.github.io/speedprobe/)**
+
+![SpeedProbe in action](architecture/demo.gif)
+
 SpeedProbe is a free, privacy-respecting internet speed test with a deliberately
 beautiful interface. It measures download, upload, latency, jitter, bufferbloat,
 speed consistency and a full set of deep connection diagnostics — with no ads, no
