@@ -77,53 +77,55 @@ const ICONS = {
 /* ─────────────────────────── Overall grade ─────────────────────────── */
 
 /**
- * Compute an overall A+–F grade from a weighted penalty model across download,
- * upload, ping, jitter and bufferbloat.
- * @returns {string}
+ * Piecewise-linear sub-score curve. `points` is a list of [value, score] pairs
+ * sorted by value; scores are clamped at both ends.
+ * @param {number} value
+ * @param {Array<[number, number]>} points
+ * @returns {number} 0–100
  */
-function calculateGrade() {
-  const { download = 0, upload = 0, ping = 999, jitter = 99, bufferbloat = 99 } = state.results;
-  let score = 100;
+function curve(value, points) {
+  if (value <= points[0][0]) return points[0][1];
+  for (let i = 1; i < points.length; i++) {
+    const [x1, y1] = points[i - 1];
+    const [x2, y2] = points[i];
+    if (value <= x2) return y1 + ((value - x1) / (x2 - x1)) * (y2 - y1);
+  }
+  return points[points.length - 1][1];
+}
 
-  if (download >= 500) score -= 0;
-  else if (download >= 200) score -= 4;
-  else if (download >= 100) score -= 9;
-  else if (download >= 50) score -= 16;
-  else if (download >= 25) score -= 22;
-  else if (download >= 10) score -= 28;
-  else score -= 35;
+/** Per-metric sub-score curves and weights. Weights are renormalised over measured metrics. */
+const GRADE_MODEL = [
+  { key: 'download',    weight: 0.3, score: (v) => curve(v, [[0, 0], [10, 35], [50, 65], [100, 80], [250, 95], [500, 100]]) },
+  { key: 'upload',      weight: 0.2, score: (v) => curve(v, [[0, 0], [5, 35], [20, 65], [50, 85], [200, 100]]) },
+  { key: 'ping',        weight: 0.2, score: (v) => curve(v, [[5, 100], [15, 90], [30, 75], [60, 50], [100, 25], [200, 0]]) },
+  { key: 'jitter',      weight: 0.1, score: (v) => curve(v, [[2, 100], [5, 85], [10, 65], [20, 40], [50, 0]]) },
+  { key: 'bufferbloat', weight: 0.2, score: (v) => curve(v, [[5, 100], [30, 85], [60, 65], [200, 20], [400, 0]]) },
+];
 
-  if (upload >= 200) score -= 0;
-  else if (upload >= 50) score -= 4;
-  else if (upload >= 20) score -= 9;
-  else if (upload >= 10) score -= 13;
-  else if (upload >= 5) score -= 16;
-  else score -= 20;
+/**
+ * Compute an overall A+–F grade as a weighted average of per-metric sub-scores.
+ * Unmeasured metrics are skipped rather than penalised.
+ * @param {import('./state.js').TestResults} [results]
+ * @returns {string} Grade, or '—' when download or upload was not measured.
+ */
+export function calculateGrade(results = state.results) {
+  if (results.download == null || results.upload == null) return '—';
 
-  if (ping < 5) score -= 0;
-  else if (ping < 15) score -= 5;
-  else if (ping < 30) score -= 10;
-  else if (ping < 60) score -= 15;
-  else if (ping < 100) score -= 20;
-  else score -= 25;
+  let weighted = 0;
+  let weightSum = 0;
+  for (const { key, weight, score } of GRADE_MODEL) {
+    const value = results[key];
+    if (value == null || Number.isNaN(value)) continue;
+    weighted += weight * score(Math.max(0, value));
+    weightSum += weight;
+  }
+  const points = weighted / weightSum;
 
-  if (jitter < 2) score -= 0;
-  else if (jitter < 5) score -= 2;
-  else if (jitter < 10) score -= 5;
-  else if (jitter < 20) score -= 8;
-  else score -= 10;
-
-  if (bufferbloat < 5) score -= 0;
-  else if (bufferbloat < 30) score -= 2;
-  else if (bufferbloat < 60) score -= 5;
-  else if (bufferbloat < 200) score -= 8;
-  else score -= 10;
-
-  if (score >= 90) return 'A+';
-  if (score >= 80) return 'A';
-  if (score >= 70) return 'B';
-  if (score >= 60) return 'C';
-  if (score >= 50) return 'D';
+  if (points >= 90) return 'A+';
+  if (points >= 80) return 'A';
+  if (points >= 70) return 'B';
+  if (points >= 60) return 'C';
+  if (points >= 50) return 'D';
   return 'F';
 }
 
@@ -379,7 +381,7 @@ export function showAnalysis() {
   const gradeBadge = byId('grade-badge');
   gradeBadge.textContent = grade;
   gradeBadge.className = `grade-big ${grade.replace('+', 'p')}`;
-  setText('grade-desc', GRADE_DESCRIPTIONS[grade] || '');
+  setText('grade-desc', GRADE_DESCRIPTIONS[grade] || 'Not enough measurements to grade this connection.');
 
   const bufferbloat = state.results.bufferbloat ?? 0;
   const bbInfo = rateBufferbloat(bufferbloat);
