@@ -5,7 +5,16 @@
   "scripts": {
     "start": "python3 -m http.server 8848"
   },
-  "keywords": ["speed-test", "network", "diagnostics", "vanilla-js", "es-modules"],
+  "keywords": [
+    "speed-test",
+    "network",
+    "diagnostics",
+    "vanilla-js",
+    "es-modules"
+  ],
   "license": "MIT",
-  "homepage": "https://iakshayubale.github.io/speedprobe"
+  "homepage": "https://iakshayubale.github.io/speedprobe",
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
 }
