@@ -4,6 +4,13 @@
 
 **[→ Live demo](https://iakshayubale.github.io/speedprobe/)**
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Live demo](https://img.shields.io/badge/demo-live-6ee7b7.svg)](https://iakshayubale.github.io/speedprobe/)
+[![Last commit](https://img.shields.io/github/last-commit/iakshayubale/speedprobe)](https://github.com/iakshayubale/speedprobe/commits/main)
+[![Stars](https://img.shields.io/github/stars/iakshayubale/speedprobe?style=social)](https://github.com/iakshayubale/speedprobe/stargazers)
+[![No build step](https://img.shields.io/badge/build%20step-none-blue.svg)](#quick-start)
+[![No tracking](https://img.shields.io/badge/tracking-none-brightgreen.svg)](#features)
+
 ![SpeedProbe in action](architecture/demo.gif)
 
 SpeedProbe is a free, privacy-respecting internet speed test with a deliberately
